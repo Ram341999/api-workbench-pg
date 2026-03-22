@@ -1,0 +1,119 @@
+/* App specific styles - mostly handled by Tailwind */
+.app-container {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.sidebar-collapsed {
+    grid-template-columns: 48px 1fr;
+}
+
+.workspace-split {
+    display: grid;
+    grid-template-rows: auto 1fr 1fr;
+    height: 100%;
+    overflow: hidden;
+}
+
+@media (min-width: 1024px) {
+    .workspace-split {
+        grid-template-rows: none;
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+/* Panel transitions */
+.panel-transition {
+    transition: width 200ms ease-in-out;
+}
+
+/* Tab styling override */
+.tab-trigger {
+    position: relative;
+    padding-bottom: 8px;
+    border-radius: 0;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.tab-trigger::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: transparent;
+    transition: background-color 150ms ease;
+}
+
+.tab-trigger[data-state="active"]::after {
+    background: #3b82f6;
+}
+
+/* Key-value table */
+.kv-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.kv-table th,
+.kv-table td {
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid #27272a;
+}
+
+.kv-table th {
+    font-weight: 500;
+    color: #a1a1aa;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Syntax highlighter container */
+.syntax-container {
+    background: #18181b;
+    border-radius: 4px;
+    overflow: auto;
+}
+
+.syntax-container pre {
+    margin: 0;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* Empty state */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #71717a;
+    text-align: center;
+    padding: 32px;
+}
+
+.empty-state svg {
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+/* Response status badges */
+.response-status.status-2xx { color: #4ade80; background: rgba(34,197,94,0.1); }
+.response-status.status-3xx { color: #fbbf24; background: rgba(245,158,11,0.1); }
+.response-status.status-4xx { color: #f87171; background: rgba(239,68,68,0.1); }
+.response-status.status-5xx { color: #f87171; background: rgba(239,68,68,0.1); }
+
+/* Method badge colors */
+.method-badge-get    { color: #4ade80; background: rgba(34,197,94,0.1); }
+.method-badge-post   { color: #60a5fa; background: rgba(59,130,246,0.1); }
+.method-badge-put    { color: #fbbf24; background: rgba(245,158,11,0.1); }
+.method-badge-patch  { color: #c084fc; background: rgba(139,92,246,0.1); }
+.method-badge-delete { color: #f87171; background: rgba(239,68,68,0.1); }
