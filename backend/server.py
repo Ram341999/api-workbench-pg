@@ -866,7 +866,7 @@ async def health(pool=Depends(get_pool)):
 app.include_router(api_router)
 
 if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR / "static"), name="assets")
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="assets")
 
     @app.get("/{full_path:path}", response_class=HTMLResponse)
     async def serve_spa(full_path: str):
