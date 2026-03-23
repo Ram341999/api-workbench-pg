@@ -214,7 +214,6 @@ def row_to_dict(row) -> dict:
     for k, v in d.items():
         if hasattr(v, 'isoformat'):
             d[k] = v.isoformat()
-        # asyncpg returns JSONB as dicts/lists already — no need to parse
     return d
 
 # ═══════════════════════════════════════════════════
@@ -251,12 +250,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "default-src 'self'; script-src 'self' 'unsafe-inline'; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
-            "img-src 'self' data: https:; connect-src 'self'"
+            "img-src 'self' data: https:; connect-src 'self' *"
         )
         return response
 
 # ═══════════════════════════════════════════════════
-#  LIFESPAN (startup / shutdown)
+#  LIFESPAN
 # ═══════════════════════════════════════════════════
 
 @asynccontextmanager
@@ -440,6 +439,14 @@ class ExecuteResponse(BaseModel):
 
 class ImportPayload(BaseModel):
     data: Dict[str, Any]
+
+class HistoryRecord(BaseModel):
+    method: str
+    url: str
+    status_code: int = 0
+    response_time: float = 0
+    response_size: int = 0
+    request_name: str = "Request"
 
 # ═══════════════════════════════════════════════════
 #  AUTH ROUTES
@@ -715,22 +722,12 @@ async def clear_history(user=Depends(get_current_user), pool=Depends(get_pool)):
     await pool.execute("DELETE FROM history WHERE user_id=$1", user["id"])
     return {"message": "Cleared"}
 
-class HistoryRecord(BaseModel):
-    method: str
-    url: str
-    status_code: int = 0
-    response_time: float = 0
-    response_size: int = 0
-    request_name: str = "Request"
-
 @api_router.post("/history/record")
 async def record_history(entry: HistoryRecord, user=Depends(get_current_user), pool=Depends(get_pool)):
-    """Called by the browser after executing a request client-side."""
     await pool.execute(
         "INSERT INTO history (id,user_id,request_name,method,url,status_code,response_time,response_size) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         str(uuid.uuid4()), user["id"], entry.request_name, entry.method,
-        entry.url, entry.status_code, entry.response_time, entry.response_size
-    )
+        entry.url, entry.status_code, entry.response_time, entry.response_size)
     await pool.execute("""
         DELETE FROM history WHERE user_id=$1 AND id NOT IN (
             SELECT id FROM history WHERE user_id=$1 ORDER BY timestamp DESC LIMIT 100)""",
@@ -738,7 +735,7 @@ async def record_history(entry: HistoryRecord, user=Depends(get_current_user), p
     return {"message": "Recorded"}
 
 # ═══════════════════════════════════════════════════
-#  EXECUTE
+#  EXECUTE (server-side fallback, SSRF protected)
 # ═══════════════════════════════════════════════════
 
 @api_router.post("/execute", response_model=ExecuteResponse)
@@ -753,7 +750,6 @@ async def execute_request(request: ExecuteRequest, req: Request,
         raise HTTPException(403, f"Request blocked: {reason}")
     if len((request.body or "").encode()) > MAX_BODY_SIZE:
         raise HTTPException(413, "Request body too large")
-
     headers = {h.key: h.value for h in request.headers if h.enabled and h.key}
     if request.auth.type == "bearer" and request.auth.bearer_token:
         headers["Authorization"] = f"Bearer {request.auth.bearer_token}"
@@ -763,12 +759,10 @@ async def execute_request(request: ExecuteRequest, req: Request,
     elif request.auth.type == "api_key" and request.auth.api_key_name and request.auth.api_key_value:
         if request.auth.api_key_location == "header":
             headers[request.auth.api_key_name] = request.auth.api_key_value
-
     params = {p.key: p.value for p in request.params if p.enabled and p.key}
     if request.auth.type == "api_key" and request.auth.api_key_location == "query":
         if request.auth.api_key_name and request.auth.api_key_value:
             params[request.auth.api_key_name] = request.auth.api_key_value
-
     body = None
     if request.method.upper() in ["POST","PUT","PATCH"] and request.body:
         body = request.body
@@ -776,7 +770,6 @@ async def execute_request(request: ExecuteRequest, req: Request,
               "form":"application/x-www-form-urlencoded","text":"text/plain"}
         if "Content-Type" not in headers:
             headers["Content-Type"] = ct.get(request.body_type, "application/json")
-
     try:
         t0 = time.monotonic()
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True, verify=True) as hc:
@@ -787,7 +780,6 @@ async def execute_request(request: ExecuteRequest, req: Request,
             resp_body = resp.text
         except Exception:
             resp_body = resp.content.decode("utf-8", errors="replace")
-
         req_name = request.url.split("?")[0].split("/")[-1] or "Request"
         await pool.execute(
             "INSERT INTO history (id,user_id,request_name,method,url,status_code,response_time,response_size) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
@@ -797,7 +789,6 @@ async def execute_request(request: ExecuteRequest, req: Request,
             DELETE FROM history WHERE user_id=$1 AND id NOT IN (
                 SELECT id FROM history WHERE user_id=$1 ORDER BY timestamp DESC LIMIT 100)""",
             user["id"])
-
         return ExecuteResponse(
             status_code=resp.status_code, headers=dict(resp.headers),
             body=resp_body, response_time=elapsed, response_size=len(resp.content),
@@ -860,20 +851,23 @@ async def health(pool=Depends(get_pool)):
     return {"status":"healthy","version":"2.0.0","db":"postgres","bcrypt":BCRYPT_AVAILABLE}
 
 # ═══════════════════════════════════════════════════
-#  Serve React SPA
+#  Serve React SPA — auto-detects static folder structure
 # ═══════════════════════════════════════════════════
 
 app.include_router(api_router)
 
 if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR / "static"), name="assets")
+    # React build puts JS/CSS in static/static/ — serve that as /static
+    # Fall back to STATIC_DIR itself if no nested static folder
+    assets_dir = STATIC_DIR / "static" if (STATIC_DIR / "static").exists() else STATIC_DIR
+    app.mount("/static", StaticFiles(directory=assets_dir), name="assets")
 
     @app.get("/{full_path:path}", response_class=HTMLResponse)
     async def serve_spa(full_path: str):
         index = STATIC_DIR / "index.html"
         if index.exists():
             return HTMLResponse(index.read_text())
-        return HTMLResponse("<h1>Build frontend first</h1>", status_code=503)
+        return HTMLResponse("<h1>Build frontend first — see README</h1>", status_code=503)
 else:
     @app.get("/")
     async def root():
