@@ -715,6 +715,28 @@ async def clear_history(user=Depends(get_current_user), pool=Depends(get_pool)):
     await pool.execute("DELETE FROM history WHERE user_id=$1", user["id"])
     return {"message": "Cleared"}
 
+class HistoryRecord(BaseModel):
+    method: str
+    url: str
+    status_code: int = 0
+    response_time: float = 0
+    response_size: int = 0
+    request_name: str = "Request"
+
+@api_router.post("/history/record")
+async def record_history(entry: HistoryRecord, user=Depends(get_current_user), pool=Depends(get_pool)):
+    """Called by the browser after executing a request client-side."""
+    await pool.execute(
+        "INSERT INTO history (id,user_id,request_name,method,url,status_code,response_time,response_size) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        str(uuid.uuid4()), user["id"], entry.request_name, entry.method,
+        entry.url, entry.status_code, entry.response_time, entry.response_size
+    )
+    await pool.execute("""
+        DELETE FROM history WHERE user_id=$1 AND id NOT IN (
+            SELECT id FROM history WHERE user_id=$1 ORDER BY timestamp DESC LIMIT 100)""",
+        user["id"])
+    return {"message": "Recorded"}
+
 # ═══════════════════════════════════════════════════
 #  EXECUTE
 # ═══════════════════════════════════════════════════
